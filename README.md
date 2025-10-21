@@ -1,0 +1,1 @@
+Just trying to do a timetabling site in python. I'm using pandas DataFrame to store all the data and processing it with OR-Tools CpModel. Currently, the data comes from CSV files, but I intend on allowing to import data directly in the site. I'm using this to learn a bit about streamlit, Pandas and overall programming logic.

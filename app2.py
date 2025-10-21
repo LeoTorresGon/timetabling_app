@@ -1,24 +1,23 @@
 import streamlit as st
 import pandas as pd
 from ortools.sat.python import cp_model
+from supabase import create_client
+
+url = st.secrets["SUPABASE_URL"]
+key = st.secrets["SUPABASE_KEY"]
+supabase = create_client(url, key)
+
+professores = pd.DataFrame(supabase.table("Professores").select("*").execute().data)
+turmas = pd.DataFrame(supabase.table("Turmas").select("*").execute().data)
+disciplinas = pd.DataFrame(supabase.table("Disciplinas").select("*").execute().data)
+horarios = pd.DataFrame(supabase.table("Horários").select("*").execute().data)
 
 # Textos streamlit
 st.set_page_config(page_title="Gerador de Horários Escolares", layout="centered")
 st.title("Timetabling")
 
-# Leitura dos dados por CSV
-professores = pd.read_csv("files/professores.csv")
-turmas = pd.read_csv("files/turmas.csv")
-disciplinas = pd.read_csv("files/disciplinas.csv")
-horarios = pd.read_csv("files/horarios.csv")
-
 # Cria o modelo CP
 model = cp_model.CpModel()
-# Limpas as colunas de espaços em branco
-professores.columns = professores.columns.str.strip()
-turmas.columns = turmas.columns.str.strip()
-disciplinas.columns = disciplinas.columns.str.strip()
-horarios.columns = horarios.columns.str.strip()
 
 # Indexa professor, turma, horário e disciplina em uma MultiIndex (Matriz de 4 dimensões)
 index = pd.MultiIndex.from_product(
@@ -53,16 +52,20 @@ if st.button("Gerar"):
 
     # --- Restrições ---
 
-    # Professores
+    # Turma não pode ter mais de duas aulas da mesma disciplina por dia
+    for (turma, disciplina, dia), grupo_df in x_df_filtrado.groupby(["Turma", "Disciplina", "Dia"]):
+        model.Add(sum(grupo_df["Obj"]) <= 2)
+
+    # Professores não pode dar mais de uma aula por dia/horário
     for (prof, dia, horario), grupo_df in x_df_filtrado.groupby(["Professor", "Dia", "Horário"]):
         model.Add(sum(grupo_df["Obj"]) <= 1)
 
-    # Turmas
+    # Turmas não pode ter mais de uma aula por dia/horário
     for (turma, dia, horario), grupo_df in x_df_filtrado.groupby(["Turma", "Dia", "Horário"]):
         model.Add(sum(grupo_df["Obj"]) <= 1)
 
     
-    # Cada disciplina deve ser atribuída exatamente uma vez por turma
+    # Cada disciplina deve ser atribuída exatamente x vezes por turma
     disciplinas_dict = pd.Series(disciplinas.número_de_aulas_por_semana.values,index=disciplinas.nome).to_dict()
 
     for (turma, disciplina), grupo_df in x_df_filtrado.groupby(["Turma", "Disciplina"]):
@@ -84,8 +87,43 @@ if st.button("Gerar"):
         model.Add(aulas_prof[prof] <= max_aulas)
         model.Add(aulas_prof[prof] >= min_aulas)
 
+    # Garantir que cada disciplina por turma é dada por apenas um professor
+    for (turma, disciplina), grupo_df in x_df_filtrado.groupby(["Turma", "Disciplina"]):
+        # Encontra professores possíveis
+        professores_possiveis = grupo_df["Professor"].unique()
+        
+        # Variáveis de decisão: qual professor vai dar a disciplina inteira
+        prof_vars = {}
+        for p in professores_possiveis:
+            prof_vars[p] = model.NewBoolVar(f"{turma}_{disciplina}_prof_{p}")
+        
+        # Garantir que apenas um professor é responsável
+        model.Add(sum(prof_vars.values()) == 1)
+        
+        # Conectar cada aula do grupo com a variável do professor
+        for row in grupo_df.itertuples():
+            for p in professores_possiveis:
+                if row.Professor == p:
+                    # Se este professor assume a disciplina, aula pode ser dele
+                    model.Add(row.Obj <= prof_vars[p])
+                else:
+                    # Se não, aula não pode ser dele
+                    model.Add(row.Obj <= 1 - prof_vars[p])
+
+
+    # Minimizar número de dias com aula por professor
+    presenca_dia = {}
+    for (prof, dia), grupo_df in x_df_filtrado.groupby(["Professor", "Dia"]):
+        y_var = model.NewBoolVar(f"presenca_{prof}_{dia}")
+        presenca_dia[(prof, dia)] = y_var
+        for var in grupo_df["Obj"]: 
+            model.Add(var <= y_var)
+    total_dias = model.NewIntVar(0, len(presenca_dia), "total_dias")
+    model.Add(total_dias == sum(presenca_dia.values()))
+
     # Objetivo
-    model.Minimize(max_aulas - min_aulas)
+    model.Minimize( .5 * (max_aulas - min_aulas) + .5 * total_dias )
+
 
     # Resolver
     solver = cp_model.CpSolver()
@@ -139,6 +177,23 @@ if st.button("Gerar"):
 
                 # Mostrar tabela
                 st.dataframe(df_pivot_combined)
+                
+            for professor, df_professor in df_result.groupby("Professor"):
+                st.subheader(f"Professor {professor}")
+                df_pivot_prof = df_professor.pivot_table(
+                    index="Horário",
+                    columns="Dia",
+                    values=["Disciplina", "Turma"],
+                    observed=False,
+                    aggfunc=lambda x: " / ".join(x)
+                )
+                df_pivot_prof = df_pivot_prof.sort_index()
+                df_pivot_prof = df_pivot_prof.reindex(columns=dias_ordenados, level=1)
+                df_pivot_prof["Disciplina"] = df_pivot_prof["Disciplina"].fillna("Sem aula")
+                df_pivot_prof["Turma"] = df_pivot_prof["Turma"].fillna(" - ")
+                df_pivot_prof_combined = df_pivot_prof["Disciplina"].astype(str) + " (" + df_pivot_prof["Turma"].astype(str) + ")"
+                
+                st.dataframe(df_pivot_prof_combined)
     else:
         st.warning("Nenhuma solução ótima encontrada.")
     
