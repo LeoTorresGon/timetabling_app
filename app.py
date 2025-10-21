@@ -21,7 +21,7 @@ st.dataframe(professores.drop(columns=["carga_horária_max", "id", "preferência
 st.subheader("Turmas")
 st.dataframe(turmas.drop(columns=["id", "tamanho"]))
 st.subheader("Disciplinas")
-st.dataframe(disciplinas.drop(columns=["id"]))
+st.dataframe(disciplinas.drop(columns=["id", "lista_disciplinas"]))
 st.subheader("Horários")
 st.dataframe(horarios.drop(columns=["id", "dia"]).drop_duplicates()) # Pegar valores únicos
 st.subheader("Dias")
