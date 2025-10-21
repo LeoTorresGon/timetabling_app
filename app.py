@@ -16,6 +16,17 @@ horarios = pd.DataFrame(supabase.table("Horários").select("*").execute().data)
 st.set_page_config(page_title="Gerador de Horários Escolares", layout="centered")
 st.title("Timetabling")
 
+st.subheader("Professores")
+st.dataframe(professores.drop(columns=["carga_horária_max", "id", "preferências"]))
+st.subheader("Turmas")
+st.dataframe(turmas.drop(columns=["id", "tamanho"]))
+st.subheader("Disciplinas")
+st.dataframe(disciplinas.drop(columns=["id"]))
+st.subheader("Horários")
+st.dataframe(horarios.drop(columns=["id", "dia"]).drop_duplicates()) # Pegar valores únicos
+st.subheader("Dias")
+st.dataframe(horarios.drop(columns=["id", "horario"]).drop_duplicates()) # Pegar valores únicos
+
 # Cria o modelo CP
 model = cp_model.CpModel()
 
@@ -37,8 +48,8 @@ x_df_filtrado = x_df_filtrado.reset_index()  # transforma MultiIndex em colunas 
 x_df_filtrado["Variavel"] = x_df_filtrado.apply(
     lambda row: f"x_{row['Professor']}_{row['Turma']}_{row['Dia']}_{row['Horário'].replace(' ', '_')}_{row['Disciplina']}", axis=1)
 x_df_filtrado["Obj"] = None
-
-st.dataframe(x_df_filtrado)
+# Imprime o dataframe filtrado
+# st.dataframe(x_df_filtrado)
 
 if st.button("Gerar"):
     model = cp_model.CpModel()
